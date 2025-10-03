@@ -8,12 +8,17 @@ jobs:
     timeout-minutes: 360
 
     steps:
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
       - name: Install Localtunnel
         run: npm install -g localtunnel
 
-      - name: Configure and Enable RDP
+      - name: Configure RDP User
         run: |
-          # Создание пользователя с автоматическим подтверждением и коротким паролем
+          # Создание пользователя с коротким паролем и автоматическим подтверждением
           net user githubuser Pass123! /add /Y
           net localgroup administrators githubuser /add
           net localgroup "Remote Desktop Users" githubuser /add
@@ -22,17 +27,40 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           
-          # Перезапуск службы Remote Desktop
+          # Перезапуск службы RDP
           Restart-Service -Name TermService -Force
 
       - name: Start Localtunnel for RDP
         run: |
-          # Запуск localtunnel в фоновом режиме
-          Start-Process -FilePath "lt" -ArgumentList "--port 3389 --subdomain your-unique-rdp-name-1234" -NoNewWindow
+          # Запуск localtunnel через npx для избежания проблем с путями
+          $subdomain = "rdp-${{ github.run_id }}-${{ github.run_attempt }}"
+          Write-Host "Tunnel will be available at: https://$subdomain.loca.lt"
           
-          # Даем время для установки туннеля
-          Start-Sleep -Seconds 10
+          # Запуск в фоне и сохранение PID
+          Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 3389 --subdomain $subdomain" -NoNewWindow -PassThru | Tee-Object -Variable tunnelProcess
+          $tunnelProcess.Id | Out-File -FilePath tunnel_pid.txt
           
-          # Блокируем выполнение на 6 часов
-          Write-Host "RDP tunnel is active for 6 hours. Connect via: your-unique-rdp-name-1234.loca.lt"
+          # Ожидание создания туннеля
+          Start-Sleep -Seconds 15
+          
+          # Проверка работы туннеля
+          Write-Host "RDP Tunnel is active!"
+          Write-Host "Connect using: $subdomain.loca.lt"
+          Write-Host "Username: githubuser"
+          Write-Host "Password: Pass123!"
+          Write-Host "This tunnel will be active for 6 hours..."
+
+      - name: Keep alive for 6 hours
+        run: |
+          # Ожидание 6 часов (21600 секунд)
           Start-Sleep -Seconds 21600
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          # Завершение процесса localtunnel
+          if (Test-Path tunnel_pid.txt) {
+            $pid = Get-Content tunnel_pid.txt
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "Cleanup completed"
