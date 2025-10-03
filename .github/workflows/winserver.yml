@@ -1,36 +1,74 @@
-name: Remote Desktop via VNC
+name: VNC Remote Desktop
 
 on: [workflow_dispatch]
 
 jobs:
-  vnc-setup:
+  vnc:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Install TightVNC
-        run: |
-          # Download and install TightVNC silently
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
-          Start-Process msiexec -ArgumentList "/i tightvnc.msi /quiet /norepass" -Wait
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install Localtunnel
+      run: npm install -g localtunnel
 
-      - name: Configure VNC Server
-        run: |
-          # Set the VNC server password non-interactively
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -silent
-          & "C:\Program Files\TightVNC\tvnserver.exe" -config -silent -passphrase=YourSecurePass123!
-
-      - name: Start VNC Service
-        run: |
-          # Ensure the VNC service is started
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -start
-
-      - name: Start Localtunnel for VNC
-        run: |
-          # Generate a unique subdomain for the tunnel
-          $subdomain = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
-          Write-Host "VNC server will be accessible via: $subdomain.loca.lt"
-          # Start localtunnel in the background
-          Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 5900 --subdomain $subdomain"
-          # Keep the step alive for 6 hours
-          Start-Sleep -Seconds 21600
+    - name: Download TightVNC
+      run: |
+        Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
+        
+    - name: Install TightVNC silently
+      run: |
+        Start-Process msiexec -ArgumentList "/i tightvnc.msi /quiet /norestart" -Wait
+        
+    - name: Configure VNC Password
+      run: |
+        # Ждем установки
+        Start-Sleep -Seconds 10
+        # Устанавливаем пароль для VNC
+        $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
+        # Запускаем сервис
+        & "$vncPath" -service -start
+        Start-Sleep -Seconds 5
+        # Устанавливаем пароль
+        & "$vncPath" -controlservice -password Pass123!
+        Start-Sleep -Seconds 3
+        
+    - name: Start VNC and Tunnel
+      run: |
+        # Генерируем уникальный субдомен
+        $subdomain = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
+        Write-Host "================================================"
+        Write-Host "VNC Connection Info:"
+        Write-Host "Address: $subdomain.loca.lt"
+        Write-Host "Port: 5900"
+        Write-Host "Password: Pass123!"
+        Write-Host "================================================"
+        
+        # Запускаем localtunnel в фоне
+        $job = Start-Job -ScriptBlock {
+            npx localtunnel --port 5900 --subdomain $using:subdomain
+        }
+        
+        # Сохраняем ID процесса для очистки
+        $job.Id | Out-File -FilePath tunnel_job.txt
+        
+        # Ждем 6 часов
+        Start-Sleep -Seconds 21600
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        # Останавливаем VNC сервис
+        $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
+        & "$vncPath" -service -stop 2>&1 | Out-Null
+        
+        # Останавливаем tunnel job
+        if (Test-Path tunnel_job.txt) {
+            $jobId = Get-Content tunnel_job.txt
+            Stop-Job -Id $jobId -Force 2>&1 | Out-Null
+            Remove-Job -Id $jobId -Force 2>&1 | Out-Null
+        }
