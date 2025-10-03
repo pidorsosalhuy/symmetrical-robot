@@ -13,12 +13,26 @@ jobs:
 
       - name: Configure and Enable RDP
         run: |
-          net user /add githubuser SecureRDPPass123!
+          # Создание пользователя с автоматическим подтверждением и коротким паролем
+          net user githubuser Pass123! /add /Y
           net localgroup administrators githubuser /add
           net localgroup "Remote Desktop Users" githubuser /add
+          
+          # Включение RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Перезапуск службы Remote Desktop
+          Restart-Service -Name TermService -Force
 
       - name: Start Localtunnel for RDP
         run: |
-          lt --port 3389 --subdomain your-unique-rdp-name-1234 | Out-File -FilePath localtunnel_url.txt
-          Get-Content localtunnel_url.txt
+          # Запуск localtunnel в фоновом режиме
+          Start-Process -FilePath "lt" -ArgumentList "--port 3389 --subdomain your-unique-rdp-name-1234" -NoNewWindow
+          
+          # Даем время для установки туннеля
+          Start-Sleep -Seconds 10
+          
+          # Блокируем выполнение на 6 часов
+          Write-Host "RDP tunnel is active for 6 hours. Connect via: your-unique-rdp-name-1234.loca.lt"
           Start-Sleep -Seconds 21600
