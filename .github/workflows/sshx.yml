@@ -1,0 +1,77 @@
+name: SSHX Tunnel with Telegram Notification
+
+on:
+  workflow_dispatch:  # Позволяет запускать вручную из интерфейса GitHub
+
+jobs:
+  sshx-tunnel:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install SSHX and establish tunnel
+      run: |
+        # Устанавливаем SSHX
+        curl -sSf https://sshx.io/get | sh
+        
+        # Запускаем SSHX в фоновом режиме и получаем ссылку
+        ./sshx > sshx_output.txt 2>&1 &
+        SSHX_PID=$!
+        
+        # Ждем немного чтобы SSHX успел запуститься
+        sleep 10
+        
+        # Извлекаем ссылку из вывода
+        SSHX_URL=$(grep -o 'https://[^ ]*' sshx_output.txt | head -1)
+        
+        # Сохраняем PID и URL для последующих шагов
+        echo "SSHX_PID=$SSHX_PID" >> $GITHUB_ENV
+        echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
+        
+        # Выводим информацию для отладки
+        echo "SSHX PID: $SSHX_PID"
+        echo "SSHX URL: $SSHX_URL"
+        cat sshx_output.txt
+
+    - name: Send Telegram notification
+      env:
+        TELEGRAM_API_TOKEN: "8179030443:AAEL8dF4cxeAQ3bLbsb_CrAHI2nfcWK12XE"
+        CHAT_ID: "7309086003"
+      run: |
+        # Формируем сообщение для Telegram
+        MESSAGE="SSHX tunnel established!%0AURL: $SSHX_URL%0AThis tunnel will be active for 6 hours.%0AWorkflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        
+        # Отправляем сообщение в Telegram
+        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_API_TOKEN/sendMessage" \
+          -d chat_id="$CHAT_ID" \
+          -d text="$MESSAGE" \
+          -d disable_web_page_preview=true
+
+    - name: Wait for 6 hours
+      run: |
+        echo "SSHX tunnel is active. Waiting for 6 hours..."
+        # Ждем 6 часов (21600 секунд)
+        sleep 21600
+        echo "6 hours have passed. Stopping SSHX tunnel..."
+        
+        # Останавливаем SSHX процесс
+        kill $SSHX_PID 2>/dev/null || true
+
+    - name: Send completion notification
+      if: always()
+      env:
+        TELEGRAM_API_TOKEN: "8179030443:AAEL8dF4cxeAQ3bLbsb_CrAHI2nfcWK12XE"
+        CHAT_ID: "7309086003"
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          MESSAGE="SSHX tunnel session completed after 6 hours.%0AWorkflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        else
+          MESSAGE="SSHX tunnel workflow finished with status: ${{ job.status }}%0AWorkflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        fi
+        
+        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_API_TOKEN/sendMessage" \
+          -d chat_id="$CHAT_ID" \
+          -d text="$MESSAGE" \
+          -d disable_web_page_preview=true
