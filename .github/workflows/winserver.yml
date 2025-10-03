@@ -3,31 +3,22 @@ name: Remote Desktop Tunnel via Localtunnel
 on: [workflow_dispatch]
 
 jobs:
- rdp:
- runs-on: windows-latest
- timeout-minutes: 360
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
 
- steps:
-  - name: Install Localtunnel
-  # Установка клиента через npm (Node Package Manager)
-  run: npm install -g localtunnel
+    steps:
+      - name: Install Localtunnel
+        run: npm install -g localtunnel
 
-  - name: Configure and Enable RDP
-  run: |
-   # Создание пользователя для RDP
-   net user /add githubuser SecureRDPPass123!
-   net localgroup administrators githubuser /add
-   net localgroup "Remote Desktop Users" githubuser /add
+      - name: Configure and Enable RDP
+        run: |
+          net user /add githubuser SecureRDPPass123!
+          net localgroup administrators githubuser /add
+          net localgroup "Remote Desktop Users" githubuser /add
 
-  - name: Start Localtunnel for RDP
-  # Важно: Localtunnel по умолчанию пытается туннелировать HTTP.
-  # Для RDP (TCP) лучше использовать уникальное поддоменное имя.
-  # ВАЖНО: Замените 'your-unique-rdp-name-1234' на что-то уникальное.
-  run: |
-   lt --port 3389 --subdomain your-unique-rdp-name-1234 | Out-File -FilePath localtunnel_url.txt
-
-   # Вывод адреса подключения
-   Get-Content localtunnel_url.txt
-
-   # Блокируем завершение workflow на 6 часов
-   Start-Sleep -Seconds 21600
+      - name: Start Localtunnel for RDP
+        run: |
+          lt --port 3389 --subdomain your-unique-rdp-name-1234 | Out-File -FilePath localtunnel_url.txt
+          Get-Content localtunnel_url.txt
+          Start-Sleep -Seconds 21600
