@@ -1,4 +1,4 @@
-name: VNC via Serveo
+name: VNC via Cloudflare Tunnel
 
 on: [workflow_dispatch]
 
@@ -8,40 +8,28 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Install OpenSSH Client
-      run: |
-        # Устанавливаем SSH клиент в Windows
-        Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
-
-    - name: Install TightVNC
+    - name: Install VNC
       run: |
         Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
         Start-Process msiexec -ArgumentList "/i tightvnc.msi /quiet /norestart" -Wait
-
-    - name: Configure VNC
-      run: |
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 10
         $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
         & "$vncPath" -service -start
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 5
         & "$vncPath" -controlservice -password Pass123!
 
-    - name: Start Serveo Tunnel
+    - name: Install Cloudflared
       run: |
-        $subdomain = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
-        Write-Host "Starting Serveo tunnel..."
+        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+
+    - name: Create and run tunnel
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      run: |
+        # Создаем туннель с уникальным именем
+        $tunnelName = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
         
-        # Запускаем SSH туннель через Serveo
-        $tunnelJob = Start-Job -ScriptBlock {
-            ssh -o StrictHostKeyChecking=no -R ${using:subdomain}:80:localhost:5900 serveo.net
-        }
+        Write-Host "Starting Cloudflare tunnel: $tunnelName"
         
-        Write-Host "================================================"
-        Write-Host "VNC Connection Info:"
-        Write-Host "Address: ${subdomain}.serveo.net"
-        Write-Host "Port: 5900" 
-        Write-Host "Password: Pass123!"
-        Write-Host "================================================"
-        
-        # Ждем 6 часов
-        Start-Sleep -Seconds 21600
+        # Запускаем туннель (cloudflared автоматически использует env переменную CLOUDFLARE_API_TOKEN)
+        .\cloudflared.exe tunnel --url tcp://localhost:5900 --name $tunnelName
