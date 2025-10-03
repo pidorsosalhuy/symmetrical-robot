@@ -1,0 +1,60 @@
+name: Serveo Tunnel with Persistence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  serveo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Restore workspace
+      run: |
+        # Восстанавливаем файлы из репозитория
+        if [ -f workspace.tar.gz ]; then
+          tar -xzf workspace.tar.gz -C /home/runner/
+          echo "✅ Workspace restored"
+        else
+          echo "🆕 No previous workspace found"
+        fi
+
+    - name: Install and setup SSH server
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-server openssh-client
+        
+        # Создаем пользователя none
+        sudo useradd -m -s /bin/bash none
+        echo "none:h4ck3d" | sudo chpasswd
+        
+        # Даем права на домашнюю директорию
+        sudo chown -R none:none /home/none
+        
+        # Настраиваем SSH
+        sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+        echo "AllowUsers none" | sudo tee -a /etc/ssh/sshd_config
+        
+        # Запускаем SSH сервер
+        sudo service ssh start
+
+    - name: Start Serveo tunnel
+      run: |
+        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net
+
+    - name: Save workspace
+      if: always()
+      run: |
+        # Сохраняем файлы в репозиторий
+        tar -czf workspace.tar.gz /home/none/
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add workspace.tar.gz
+        git commit -m "Save workspace $(date)" || echo "No changes to commit"
+        git push
