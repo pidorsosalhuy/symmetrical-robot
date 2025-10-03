@@ -1,4 +1,4 @@
-name: VNC Remote Desktop
+name: VNC via Serveo
 
 on: [workflow_dispatch]
 
@@ -8,67 +8,40 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Install Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Install Localtunnel
-      run: npm install -g localtunnel
+    - name: Install OpenSSH Client
+      run: |
+        # Устанавливаем SSH клиент в Windows
+        Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 
-    - name: Download TightVNC
+    - name: Install TightVNC
       run: |
         Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
-        
-    - name: Install TightVNC silently
-      run: |
         Start-Process msiexec -ArgumentList "/i tightvnc.msi /quiet /norestart" -Wait
-        
-    - name: Configure VNC Password
+
+    - name: Configure VNC
       run: |
-        # Ждем установки
-        Start-Sleep -Seconds 10
-        # Устанавливаем пароль для VNC
-        $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
-        # Запускаем сервис
-        & "$vncPath" -service -start
         Start-Sleep -Seconds 5
-        # Устанавливаем пароль
-        & "$vncPath" -controlservice -password Pass123!
+        $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
+        & "$vncPath" -service -start
         Start-Sleep -Seconds 3
-        
-    - name: Start VNC and Tunnel
+        & "$vncPath" -controlservice -password Pass123!
+
+    - name: Start Serveo Tunnel
       run: |
-        # Генерируем уникальный субдомен
         $subdomain = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
+        Write-Host "Starting Serveo tunnel..."
+        
+        # Запускаем SSH туннель через Serveo
+        $tunnelJob = Start-Job -ScriptBlock {
+            ssh -o StrictHostKeyChecking=no -R ${using:subdomain}:80:localhost:5900 serveo.net
+        }
+        
         Write-Host "================================================"
         Write-Host "VNC Connection Info:"
-        Write-Host "Address: $subdomain.loca.lt"
-        Write-Host "Port: 5900"
+        Write-Host "Address: ${subdomain}.serveo.net"
+        Write-Host "Port: 5900" 
         Write-Host "Password: Pass123!"
         Write-Host "================================================"
         
-        # Запускаем localtunnel в фоне
-        $job = Start-Job -ScriptBlock {
-            npx localtunnel --port 5900 --subdomain $using:subdomain
-        }
-        
-        # Сохраняем ID процесса для очистки
-        $job.Id | Out-File -FilePath tunnel_job.txt
-        
         # Ждем 6 часов
         Start-Sleep -Seconds 21600
-        
-    - name: Cleanup
-      if: always()
-      run: |
-        # Останавливаем VNC сервис
-        $vncPath = "C:\Program Files\TightVNC\tvnserver.exe"
-        & "$vncPath" -service -stop 2>&1 | Out-Null
-        
-        # Останавливаем tunnel job
-        if (Test-Path tunnel_job.txt) {
-            $jobId = Get-Content tunnel_job.txt
-            Stop-Job -Id $jobId -Force 2>&1 | Out-Null
-            Remove-Job -Id $jobId -Force 2>&1 | Out-Null
-        }
