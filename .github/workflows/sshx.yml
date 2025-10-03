@@ -1,40 +1,30 @@
-name: Simple SSHX Tunnel
-
-on:
-  workflow_dispatch:
+name: SSHX Tunnel
+on: workflow_dispatch
 
 jobs:
   sshx:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     
     steps:
-    - name: Install and start SSHX
+    - name: Install SSHX
       run: |
-        # Устанавливаем SSHX
         curl -sSf https://sshx.io/get | sh
-        echo "✅ SSHX installed"
-        
-        # Запускаем SSHX в фоне и получаем ссылку
-        sshx | head -n 5 > sshx.log &
-        echo "🚀 SSHX started in background"
-        
-        # Ждем появления ссылки
-        sleep 10
-        
-        # Ищем ссылку в логе
-        SSHX_URL=$(grep -o 'https://[^ ]*' sshx.log | head -1)
-        echo "🔗 Tunnel URL: $SSHX_URL"
-        echo "SSHX_URL=$SSHX_URL" >> $GITHUB_ENV
-
-    - name: Send to Telegram
+        echo "$HOME/.sshx/bin" >> $GITHUB_PATH
+    
+    - name: Start SSHX in background
       run: |
+        nohup sshx > sshx.log 2>&1 &
+        echo $! > sshx.pid
+        sleep 10
+        cat sshx.log
+    
+    - name: Send Telegram
+      run: |
+        URL=$(grep -o 'https://[^ ]*' sshx.log | head -1)
         curl -s -X POST "https://api.telegram.org/bot8179030443:AAEL8dF4cxeAQ3bLbsb_CrAHI2nfcWK12XE/sendMessage" \
           -d chat_id="7309086003" \
-          -d text="✅ SSHX tunnel: $SSHX_URL" \
-          -d disable_web_page_preview=false
-
-    - name: Wait 6 hours
-      run: |
-        echo "⏳ Waiting 6 hours..."
-        sleep 21600
-        echo "✅ Done"
+          -d text="SSHX: $URL" || echo "Telegram failed"
+    
+    - name: Wait
+      run: sleep 21600
