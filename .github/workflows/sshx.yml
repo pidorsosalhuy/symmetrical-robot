@@ -11,8 +11,22 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Install SSH and start tunnel
+    - name: Install and setup SSH server
       run: |
         sudo apt-get update
-        sudo apt-get install -y openssh-client
+        sudo apt-get install -y openssh-server openssh-client
+        
+        # Создаем пароль для пользователя runner (или используем существующий)
+        echo "runner:password123" | sudo chpasswd
+        
+        # Разрешаем парольную аутентификацию
+        sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        
+        # Запускаем SSH сервер
+        sudo service ssh start
+        sudo service ssh status
+
+    - name: Start Serveo tunnel
+      run: |
         ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net
