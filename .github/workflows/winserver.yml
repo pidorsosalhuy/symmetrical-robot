@@ -1,23 +1,36 @@
-name: Browser VNC
+name: Remote Desktop via VNC
 
 on: [workflow_dispatch]
 
 jobs:
-  novnc:
+  vnc-setup:
     runs-on: windows-latest
-    
+    timeout-minutes: 360
+
     steps:
-    - name: Setup noVNC environment
-      run: |
-        # Установка VNC и noVNC
-        choco install tightvnc -y
-        # Запуск VNC сервера
-        "C:\Program Files\TightVNC\tvnserver.exe" -register
-        "C:\Program Files\TightVNC\tvnserver.exe" -start
-        
-    - name: Expose VNC via Tunnel
-      run: |
-        $subdomain = "novnc-${{ github.run_id }}"
-        npx localtunnel --port 5900 --subdomain $subdomain &
-        Write-Host "Connect via VNC client to: $subdomain.loca.lt:5900"
-        Start-Sleep 21600
+      - name: Install TightVNC
+        run: |
+          # Download and install TightVNC silently
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
+          Start-Process msiexec -ArgumentList "/i tightvnc.msi /quiet /norepass" -Wait
+
+      - name: Configure VNC Server
+        run: |
+          # Set the VNC server password non-interactively
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -silent
+          & "C:\Program Files\TightVNC\tvnserver.exe" -config -silent -passphrase=YourSecurePass123!
+
+      - name: Start VNC Service
+        run: |
+          # Ensure the VNC service is started
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -start
+
+      - name: Start Localtunnel for VNC
+        run: |
+          # Generate a unique subdomain for the tunnel
+          $subdomain = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
+          Write-Host "VNC server will be accessible via: $subdomain.loca.lt"
+          # Start localtunnel in the background
+          Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 5900 --subdomain $subdomain"
+          # Keep the step alive for 6 hours
+          Start-Sleep -Seconds 21600
