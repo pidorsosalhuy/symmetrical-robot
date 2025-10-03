@@ -1,4 +1,4 @@
-name: Serveo Tunnel with Persistence
+name: Serveo Tunnel with Split Workspace
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 jobs:
   serveo:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 355
 
     steps:
     - name: Checkout repository
@@ -16,9 +16,10 @@ jobs:
 
     - name: Restore workspace
       run: |
-        # Восстанавливаем файлы из репозитория
-        if [ -f workspace.tar.gz ]; then
-          tar -xzf workspace.tar.gz -C /home/runner/
+        # Проверяем есть ли части воркспейса
+        if ls workspace_part_* 1> /dev/null 2>&1; then
+          echo "✅ Restoring workspace from parts..."
+          cat workspace_part_* | tar -xzf - -C /home/runner/
           echo "✅ Workspace restored"
         else
           echo "🆕 No previous workspace found"
@@ -29,32 +30,71 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y openssh-server openssh-client
         
-        # Создаем пользователя none
         sudo useradd -m -s /bin/bash none
         echo "none:h4ck3d" | sudo chpasswd
+        sudo usermod -aG sudo none
+        echo "none ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/none
         
-        # Даем права на домашнюю директорию
-        sudo chown -R none:none /home/none
-        
-        # Настраиваем SSH
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
         sudo sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
         echo "AllowUsers none" | sudo tee -a /etc/ssh/sshd_config
         
-        # Запускаем SSH сервер
         sudo service ssh start
 
     - name: Start Serveo tunnel
       run: |
-        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net
+        # Запускаем Serveo в фоне
+        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net &
+        SERVEOPID=$!
+        
+        # Ждем 5 часов 55 минут
+        sleep 21300
+        
+        # Сохраняем воркспейс с умным разбитием
+        echo "💾 Saving workspace with smart splitting..."
+        
+        # Оцениваем размер воркспейса
+        SIZE=$(du -sb /home/none/ | cut -f1)
+        echo "Workspace size: $SIZE bytes"
+        
+        # Вычисляем нужный размер части (макс 500MB на часть)
+        PART_SIZE=500000000  # 500MB в байтах
+        NEEDED_PARTS=$(( (SIZE + PART_SIZE - 1) / PART_SIZE ))
+        
+        # Минимум 1 часть, максимум 20 частей (10GB)
+        if [ $NEEDED_PARTS -lt 1 ]; then
+          NEEDED_PARTS=1
+        fi
+        if [ $NEEDED_PARTS -gt 20 ]; then
+          NEEDED_PARTS=20
+        fi
+        
+        ACTUAL_PART_SIZE=$(( (SIZE + NEEDED_PARTS - 1) / NEEDED_PARTS ))
+        
+        echo "Splitting into $NEEDED_PARTS parts (~$((ACTUAL_PART_SIZE/1000000))MB each)"
+        
+        # Удаляем старые части
+        rm -f workspace_part_*
+        
+        # Создаем новые части
+        tar -czf - /home/none/ | split -b ${ACTUAL_PART_SIZE} - workspace_part_
+        
+        # Коммитим части
+        git config user.email "action@github.com"
+        git config user.name "GitHub Action"
+        git add workspace_part_*
+        git commit -m "Workspace split into $NEEDED_PARTS parts ($((SIZE/1000000))MB total)" || echo "No changes"
+        git push
+        
+        # Убиваем Serveo чтобы workflow завершился
+        kill $SERVEOPID 2>/dev/null || true
 
-    - name: Save workspace
+    - name: Trigger restart
       if: always()
       run: |
-        # Сохраняем файлы в репозиторий
-        tar -czf workspace.tar.gz /home/none/
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add workspace.tar.gz
-        git commit -m "Save workspace $(date)" || echo "No changes to commit"
-        git push
+        echo "🔄 Triggering restart..."
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/dispatches" \
+          -d '{"ref":"${{ github.ref }}"}'
