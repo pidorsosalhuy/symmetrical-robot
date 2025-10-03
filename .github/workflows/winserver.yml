@@ -1,66 +1,23 @@
-name: Remote Desktop Tunnel via Localtunnel
+name: Browser VNC
 
 on: [workflow_dispatch]
 
 jobs:
-  rdp:
+  novnc:
     runs-on: windows-latest
-    timeout-minutes: 360
-
+    
     steps:
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          
-      - name: Install Localtunnel
-        run: npm install -g localtunnel
-
-      - name: Configure RDP User
-        run: |
-          # Создание пользователя с коротким паролем и автоматическим подтверждением
-          net user githubuser Pass123! /add /Y
-          net localgroup administrators githubuser /add
-          net localgroup "Remote Desktop Users" githubuser /add
-          
-          # Включение RDP
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          # Перезапуск службы RDP
-          Restart-Service -Name TermService -Force
-
-      - name: Start Localtunnel for RDP
-        run: |
-          # Запуск localtunnel через npx для избежания проблем с путями
-          $subdomain = "rdp-${{ github.run_id }}-${{ github.run_attempt }}"
-          Write-Host "Tunnel will be available at: https://$subdomain.loca.lt"
-          
-          # Запуск в фоне и сохранение PID
-          Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 3389 --subdomain $subdomain" -NoNewWindow -PassThru | Tee-Object -Variable tunnelProcess
-          $tunnelProcess.Id | Out-File -FilePath tunnel_pid.txt
-          
-          # Ожидание создания туннеля
-          Start-Sleep -Seconds 15
-          
-          # Проверка работы туннеля
-          Write-Host "RDP Tunnel is active!"
-          Write-Host "Connect using: $subdomain.loca.lt"
-          Write-Host "Username: githubuser"
-          Write-Host "Password: Pass123!"
-          Write-Host "This tunnel will be active for 6 hours..."
-
-      - name: Keep alive for 6 hours
-        run: |
-          # Ожидание 6 часов (21600 секунд)
-          Start-Sleep -Seconds 21600
-          
-      - name: Cleanup
-        if: always()
-        run: |
-          # Завершение процесса localtunnel
-          if (Test-Path tunnel_pid.txt) {
-            $pid = Get-Content tunnel_pid.txt
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-          }
-          Write-Host "Cleanup completed"
+    - name: Setup noVNC environment
+      run: |
+        # Установка VNC и noVNC
+        choco install tightvnc -y
+        # Запуск VNC сервера
+        "C:\Program Files\TightVNC\tvnserver.exe" -register
+        "C:\Program Files\TightVNC\tvnserver.exe" -start
+        
+    - name: Expose VNC via Tunnel
+      run: |
+        $subdomain = "novnc-${{ github.run_id }}"
+        npx localtunnel --port 5900 --subdomain $subdomain &
+        Write-Host "Connect via VNC client to: $subdomain.loca.lt:5900"
+        Start-Sleep 21600
