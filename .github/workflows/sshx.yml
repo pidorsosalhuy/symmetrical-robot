@@ -1,30 +1,36 @@
-name: SSHX Tunnel
-on: workflow_dispatch
+name: Serveo Tunnel
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
 
 jobs:
-  sshx:
+  serveo:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    
+
     steps:
-    - name: Install SSHX
+    - name: Stop previous runs
       run: |
-        curl -sSf https://sshx.io/get | sh
-        echo "$HOME/.sshx/bin" >> $GITHUB_PATH
-    
-    - name: Start SSHX in background
+        curl -s -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress" | \
+          jq -r '.workflow_runs[] | select(.name == "Serveo Tunnel" and .id != ${{ github.run_id }}) | .id' | \
+          xargs -I {} curl -s -X POST \
+          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/runs/{}/cancel"
+
+    - name: Install SSH and start tunnel
       run: |
-        nohup sshx > sshx.log 2>&1 &
-        echo $! > sshx.pid
-        sleep 10
-        cat sshx.log
-    
-    - name: Send Telegram
+        sudo apt-get update
+        sudo apt-get install -y openssh-client
+        ssh -o StrictHostKeyChecking=no -R github-runner:80:localhost:8080 serveo.net
+
+    - name: Trigger restart
+      if: always()
       run: |
-        URL=$(grep -o 'https://[^ ]*' sshx.log | head -1)
-        curl -s -X POST "https://api.telegram.org/bot8179030443:AAEL8dF4cxeAQ3bLbsb_CrAHI2nfcWK12XE/sendMessage" \
-          -d chat_id="7309086003" \
-          -d text="SSHX: $URL" || echo "Telegram failed"
-    
-    - name: Wait
-      run: sleep 21600
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/dispatches" \
+          -d '{"ref":"${{ github.ref }}"}'
