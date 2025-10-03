@@ -1,6 +1,9 @@
-name: VNC via Cloudflare Quick Tunnel
+name: VNC via Cloudflare TCP Tunnel
 
 on: [workflow_dispatch]
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
 jobs:
   vnc:
@@ -18,26 +21,44 @@ jobs:
         Start-Sleep -Seconds 5
         & "$vncPath" -controlservice -password Pass123!
 
-    - name: Start Quick Tunnel
+    - name: Install Cloudflared
       run: |
         Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-        
-        # Запускаем quick tunnel (не требует аутентификации)
-        $tunnelJob = Start-Job -ScriptBlock {
-            $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru -NoNewWindow
-            return $process.Id
-        }
-        
-        # Ждем и получаем URL
-        Start-Sleep -Seconds 10
-        
-        # Cloudflared сам покажет URL в консоли
+
+    - name: Create TCP Tunnel
+      run: |
+        # Устанавливаем API токен как переменную окружения (уже сделано через env)
+        # Создаем туннель с уникальным именем
+        $tunnelName = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
+        Write-Host "Creating tunnel: $tunnelName"
+
+        # Создаем туннель и получаем его ID
+        .\cloudflared.exe tunnel create $tunnelName
+        # Настраиваем туннель на перенаправление TCP трафика
+        # Создаем конфиг файл для туннеля
+        $tunnelConfig = @"
+tunnel: $tunnelName
+credentials-file: .cloudflared/$tunnelName.json
+ingress:
+  - hostname: $tunnelName.try.cloudflare.com
+    service: tcp://localhost:5900
+  - service: http_status:404
+"@
+        $tunnelConfig | Out-File -FilePath "config.yml" -Encoding ASCII
+
+        # Назначаем DNS запись для туннеля
+        .\cloudflared.exe tunnel route dns $tunnelName $tunnelName
+
+        Write-Host "Tunnel created and DNS configured"
+
+    - name: Run Tunnel
+      run: |
+        $tunnelName = "vnc-${{ github.run_id }}-${{ github.run_attempt }}"
         Write-Host "================================================"
-        Write-Host "🚀 QUICK TUNNEL STARTED"
-        Write-Host "Check logs above for connection URL"
-        Write-Host "Format: random-string.try.cloudflare.com"
+        Write-Host "🚀 VNC TUNNEL STARTED"
+        Write-Host "VNC Address: $tunnelName.try.cloudflare.com:5900"
         Write-Host "VNC Password: Pass123!"
         Write-Host "================================================"
-        
-        # Ждем 6 часов
-        Start-Sleep -Seconds 21600
+
+        # Запускаем туннель
+        .\cloudflared.exe tunnel run $tunnelName
