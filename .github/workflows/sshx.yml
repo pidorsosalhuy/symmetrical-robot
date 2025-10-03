@@ -11,26 +11,8 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Stop previous runs
-      run: |
-        curl -s -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress" | \
-          jq -r '.workflow_runs[] | select(.name == "Serveo Tunnel" and .id != ${{ github.run_id }}) | .id' | \
-          xargs -I {} curl -s -X POST \
-          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs/{}/cancel"
-
     - name: Install SSH and start tunnel
       run: |
         sudo apt-get update
         sudo apt-get install -y openssh-client
-        ssh -o StrictHostKeyChecking=no -R github-runner:80:localhost:8080 serveo.net
-
-    - name: Trigger restart
-      if: always()
-      run: |
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/dispatches" \
-          -d '{"ref":"${{ github.ref }}"}'
+        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net
