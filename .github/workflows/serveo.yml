@@ -44,7 +44,7 @@ jobs:
     - name: Start Serveo tunnel
       run: |
         # Запускаем Serveo в фоне
-        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net &
+        ssh -o StrictHostKeyChecking=no -R runneradmin:22:localhost:22 serveo.net &
         SERVEOPID=$!
         
         # Ждем 5 часов 55 минут
