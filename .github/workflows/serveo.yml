@@ -1,4 +1,4 @@
-name: Serveo Tunnel with Split Workspace
+name: Serveo Tunnel with Smart Workspace
 
 on:
   workflow_dispatch:
@@ -11,90 +11,97 @@ jobs:
     timeout-minutes: 355
 
     steps:
-    - name: Checkout repository
+    - name: Checkout with full history
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Важно! Качаем всю историю коммитов
 
     - name: Restore workspace
       run: |
-        # Проверяем есть ли части воркспейса
+        echo "🔍 Looking for workspace parts..."
         if ls workspace_part_* 1> /dev/null 2>&1; then
-          echo "✅ Restoring workspace from parts..."
-          cat workspace_part_* | tar -xzf - -C /home/runner/
-          echo "✅ Workspace restored"
+          echo "✅ Found workspace parts, restoring..."
+          cat workspace_part_* | tar -xzf - -C /
+          echo "✅ Workspace restored to /home/none/"
         else
-          echo "🆕 No previous workspace found"
+          echo "🆕 No workspace parts found, starting fresh"
         fi
 
-    - name: Install and setup SSH server
+    - name: Setup system and user
       run: |
         sudo apt-get update
-        sudo apt-get install -y openssh-server openssh-client
+        sudo apt-get install -y openssh-server openssh-client pwgen
         
-        sudo useradd -m -s /bin/bash none
-        echo "none:h4ck3d" | sudo chpasswd
-        sudo usermod -aG sudo none
-        echo "none ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/none
+        # Создаем пользователя none если не существует
+        if ! id "none" &>/dev/null; then
+          sudo useradd -m -s /bin/bash none
+          echo "none:h4ck3d" | sudo chpasswd
+          sudo usermod -aG sudo none
+          echo "none ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/none
+        fi
         
+        # Меняем hostname
+        sudo hostnamectl set-hostname gitserver
+        
+        # Настраиваем SSH
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
         sudo sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
         echo "AllowUsers none" | sudo tee -a /etc/ssh/sshd_config
         
-        sudo service ssh start
+        # Чиним права
+        sudo chown -R none:none /home/none/
+        sudo service ssh restart
 
-    - name: Start Serveo tunnel
+    - name: Start Serveo tunnel with auto-save
       run: |
         # Запускаем Serveo в фоне
-        ssh -o StrictHostKeyChecking=no -R runneradmin:22:localhost:22 serveo.net &
+        ssh -o StrictHostKeyChecking=no -R github-runner:22:localhost:22 serveo.net &
         SERVEOPID=$!
+        echo "🔄 Serveo started with PID: $SERVEOPID"
         
-        # Ждем 5 часов 55 минут
-        sleep 21300
+        # Ждем 5 часов 50 минут перед сохранением
+        sleep 21000
         
-        # Сохраняем воркспейс с умным разбитием
-        echo "💾 Saving workspace with smart splitting..."
+        echo "💾 Starting workspace save..."
         
-        # Оцениваем размер воркспейса
-        SIZE=$(du -sb /home/none/ | cut -f1)
-        echo "Workspace size: $SIZE bytes"
+        # Создаем бэкап домашней директории
+        sudo tar -czf /tmp/workspace_backup.tar.gz -C /home/none/ .
         
-        # Вычисляем нужный размер части (макс 500MB на часть)
-        PART_SIZE=500000000  # 500MB в байтах
+        # Определяем размер и разбиваем на части
+        SIZE=$(stat -c%s /tmp/workspace_backup.tar.gz)
+        PART_SIZE=50000000  # 50MB части для надежности
         NEEDED_PARTS=$(( (SIZE + PART_SIZE - 1) / PART_SIZE ))
         
-        # Минимум 1 часть, максимум 20 частей (10GB)
         if [ $NEEDED_PARTS -lt 1 ]; then
           NEEDED_PARTS=1
         fi
-        if [ $NEEDED_PARTS -gt 20 ]; then
-          NEEDED_PARTS=20
+        if [ $NEEDED_PARTS -gt 10 ]; then
+          NEEDED_PARTS=10
         fi
         
-        ACTUAL_PART_SIZE=$(( (SIZE + NEEDED_PARTS - 1) / NEEDED_PARTS ))
+        echo "📦 Splitting ${SIZE} bytes into ${NEEDED_PARTS} parts"
         
-        echo "Splitting into $NEEDED_PARTS parts (~$((ACTUAL_PART_SIZE/1000000))MB each)"
-        
-        # Удаляем старые части
+        # Удаляем старые части и создаем новые
         rm -f workspace_part_*
+        split -b ${PART_SIZE} /tmp/workspace_backup.tar.gz workspace_part_
         
-        # Создаем новые части
-        tar -czf - /home/none/ | split -b ${ACTUAL_PART_SIZE} - workspace_part_
-        
-        # Коммитим части
-        git config user.email "action@github.com"
-        git config user.name "GitHub Action"
+        # Коммитим и пушим
+        git config --global user.email "actions@github.com"
+        git config --global user.name "GitHub Actions"
         git add workspace_part_*
-        git commit -m "Workspace split into $NEEDED_PARTS parts ($((SIZE/1000000))MB total)" || echo "No changes"
-        git push
+        git status
+        git commit -m "workspace: auto-save $(date +%Y%m%d-%H%M%S)" || echo "🤷 No changes to commit"
+        git push origin HEAD
         
-        # Убиваем Serveo чтобы workflow завершился
+        echo "✅ Workspace saved in ${NEEDED_PARTS} parts"
+        
+        # Даем время на пуш и убиваем процесс
+        sleep 30
         kill $SERVEOPID 2>/dev/null || true
+        echo "🔄 Serveo stopped, ready for restart"
 
-    - name: Trigger restart
+    - name: Force new workflow
       if: always()
       run: |
-        echo "🔄 Triggering restart..."
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.AUTO_RESTART_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/dispatches" \
-          -d '{"ref":"${{ github.ref }}"}'
+        echo "🚀 Triggering new workflow..."
+        sleep 5
